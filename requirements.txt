@@ -1,7 +1,7 @@
 streamlit>=1.36,<2.0
 langchain>=0.2.16,<2.0
 langchain-core>=0.2.38,<2.0
-langchain-google-genai>=1.0.10,<3.0
+langchain-groq
 python-dotenv>=1.0.1
 pandas>=2.2.2
 plotly>=5.23.0

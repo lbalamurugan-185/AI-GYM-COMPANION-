@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from llm.gemini_client import get_llm
+from llm.groq_client import get_llm
 from llm.prompts import WORKOUT_SYSTEM_PROMPT
 
 def generate_workout_plan(profile, additional_context=""):

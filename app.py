@@ -8,7 +8,7 @@ from database.db import (
 )
 from modules.fitness_calculator import calculate_bmi, bmi_label
 from modules.workout_generator import generate_workout_plan
-from llm.gemini_client import ask_fitness_coach
+from llm.groq_client import ask_fitness_coach
 
 st.set_page_config(page_title="AI Gym Companion", page_icon="💪", layout="wide", initial_sidebar_state="expanded")
 init_db()
