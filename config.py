@@ -23,7 +23,7 @@ GROQ_API_KEY = get_config("GROQ_API_KEY")
 
 GROQ_MODEL = get_config(
     "GROQ_MODEL",
-    "llama-3.3-70b-versatile"
+    "openai/gpt-oss-120b"
 )
 
 
