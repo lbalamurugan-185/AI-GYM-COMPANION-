@@ -1,4 +1,22 @@
 import streamlit as st
+from database.auth import (
+    register_user,
+    login_user,
+    logout_user,
+    get_current_user
+)
+# Other imports...
+
+# Define helper function BEFORE using it
+def format_goals(goals):
+    if isinstance(goals, list):
+        return ", ".join(goals)
+    if isinstance(goals, str):
+        return goals
+    return "Not specified"
+
+
+# Other functions and sidebar code come below
 import pandas as pd
 import plotly.express as px
 from datetime import date
@@ -12,6 +30,106 @@ from llm.groq_client import ask_fitness_coach
 
 st.set_page_config(page_title="AI Gym Companion", page_icon="💪", layout="wide", initial_sidebar_state="expanded")
 init_db()
+
+# ---------------- AUTHENTICATION GATE ----------------
+
+if "auth_client" not in st.session_state:
+    st.session_state.auth_client = None
+
+if "auth_user" not in st.session_state:
+    st.session_state.auth_user = None
+
+if st.session_state.auth_user is None:
+
+    st.markdown("## 💪 AI Gym Companion")
+    st.subheader("Welcome! Login or create your account")
+
+    login_tab, signup_tab = st.tabs(["Login", "Register"])
+
+    with login_tab:
+        with st.form("login_form"):
+            email = st.text_input("Email address", key="login_email")
+            password = st.text_input(
+                "Password",
+                type="password",
+                key="login_password"
+            )
+            login_button = st.form_submit_button(
+                "Login",
+                use_container_width=True
+            )
+
+        if login_button:
+            try:
+                result = login_user(email, password)
+
+                st.session_state.auth_client = result["client"]
+                st.session_state.auth_user = result["user"]
+
+                st.success("Login successful!")
+                st.rerun()
+
+            except Exception:
+                st.error("Login failed. Check your email and password.")
+
+    with signup_tab:
+        with st.form("signup_form"):
+            new_email = st.text_input("Email address", key="signup_email")
+            new_password = st.text_input(
+                "Password (minimum 8 characters)",
+                type="password",
+                key="signup_password"
+            )
+            confirm_password = st.text_input(
+                "Confirm password",
+                type="password"
+            )
+
+            signup_button = st.form_submit_button(
+                "Create Account",
+                use_container_width=True
+            )
+
+        if signup_button:
+            if len(new_password) < 8:
+                st.error("Password must contain at least 8 characters.")
+
+            elif new_password != confirm_password:
+                st.error("Passwords do not match.")
+
+            else:
+                try:
+                    result = register_user(new_email, new_password)
+
+                    if result.session:
+                        st.success("Account created! You can now log in.")
+                    else:
+                        st.success(
+                            "Registration successful! "
+                            "Check your email to confirm your account."
+                        )
+
+                except Exception as e:
+                     st.error(f"Registration failed: {str(e)}")
+
+    st.stop()
+
+# ---------------- AUTHENTICATED USER ----------------
+# Show authenticated user details
+auth_user = st.session_state.auth_user
+
+st.sidebar.markdown("---")
+st.sidebar.caption("ACCOUNT")
+st.sidebar.write(f"Logged in: {auth_user.email}")
+
+if st.sidebar.button("Logout", use_container_width=True):
+    try:
+        logout_user(st.session_state.auth_client)
+    finally:
+        st.session_state.auth_client = None
+        st.session_state.auth_user = None
+        st.rerun()
+
 
 # SB Admin-inspired layout: dark top bar + dark side navigation + content cards.
 st.markdown("""
@@ -62,16 +180,22 @@ with st.sidebar:
     )
     st.markdown("---")
     st.caption("ACCOUNT")
-    profile_sidebar = get_profile()
+    profile_sidebar = get_profile(
+        st.session_state.auth_client,
+        st.session_state.auth_user.id
+)
     if profile_sidebar:
         st.write("👤 Profile configured")
-        st.caption(f'Goal: {profile_sidebar["goal"]}')
+        st.caption(f'Goals: {format_goals(profile_sidebar["goal"])}')
     else:
         st.caption("Complete your profile to begin.")
     st.markdown("---")
     st.caption("Powered by Streamlit + LangChain + Gemini")
 
-profile = get_profile()
+profile = get_profile(
+    st.session_state.auth_client,
+    st.session_state.auth_user.id
+)
 
 def heading(title, crumb):
     st.markdown(f'<div class="page-title">{title}</div><div class="breadcrumb">Home&nbsp; / &nbsp;{crumb}</div>', unsafe_allow_html=True)
@@ -82,6 +206,8 @@ def metric_card(label, value, foot, color):
         f'<div class="kpi-value">{value}</div><div class="kpi-foot">{foot}</div></div>',
         unsafe_allow_html=True
     )
+
+
 
 def require_profile():
     if not profile:
@@ -97,12 +223,20 @@ if page == "Dashboard":
         with c1: metric_card("CURRENT WEIGHT", f'{profile["weight_kg"]:.1f} kg', "Latest profile weight", "kpi-blue")
         with c2: metric_card("HEIGHT", f'{profile["height_cm"]:.0f} cm', "Saved profile", "kpi-yellow")
         with c3: metric_card("BMI SCREENING", f"{bmi:.1f}", bmi_label(bmi), "kpi-green")
-        with c4: metric_card("FITNESS GOAL", profile["goal"], profile["experience"]+" level", "kpi-red")
+        with c4: metric_card(
+                        "FITNESS GOALS",
+                        format_goals(profile["goal"]),
+                        profile["experience"] + " level",
+                        "kpi-red"
+                    )
         st.write("")
         left, right = st.columns([1.55,1])
         with left:
             st.markdown('<div class="panel"><div class="panel-title">📈 Weight Progress</div>', unsafe_allow_html=True)
-            progress = get_progress()
+            progress = get_progress(
+                st.session_state.auth_client,
+                st.session_state.auth_user.id
+)
             if not progress.empty:
                 fig = px.line(progress, x="entry_date", y="weight_kg", markers=True,
                               labels={"entry_date":"Date","weight_kg":"Weight (kg)"})
@@ -116,9 +250,12 @@ if page == "Dashboard":
             st.metric("Training days / week", f'{profile["days_per_week"]} days')
             st.write("**Experience:**", profile["experience"])
             st.write("**Equipment:**", profile["equipment"])
-            st.write("**Goal:**", profile["goal"])
+            st.write("**Goals:**", format_goals(profile["goal"]))
             st.markdown("</div>", unsafe_allow_html=True)
-        latest = get_latest_plan()
+        latest = get_latest_plan(
+            st.session_state.auth_client,
+            st.session_state.auth_user.id
+)
         st.markdown('<div class="panel"><div class="panel-title">🏋️ Latest AI Workout Plan</div>', unsafe_allow_html=True)
         if latest:
             st.caption(f'Generated: {latest["created_at"]}')
@@ -132,6 +269,10 @@ if page == "Dashboard":
 
 elif page == "My Profile":
     heading("My Profile", "Fitness Profile")
+    if "profile_notice" in st.session_state:
+        notice = st.session_state.pop("profile_notice")
+        st.success(notice)
+        st.toast(notice, icon="✅")
     st.markdown("Set up your basic fitness information so the AI can tailor general workout suggestions.")
     defaults = profile or {}
     with st.form("profile_form"):
@@ -140,8 +281,35 @@ elif page == "My Profile":
             age = st.number_input("Age", 16, 100, int(defaults.get("age",25)))
             height = st.number_input("Height (cm)", 100.0, 230.0, float(defaults.get("height_cm",170.0)), 0.5)
             weight = st.number_input("Current weight (kg)", 30.0, 300.0, float(defaults.get("weight_kg",70.0)), 0.5)
-            goal_options = ["Muscle gain","Fat loss","General fitness","Strength","Improve endurance"]
-            goal = st.selectbox("Fitness goal", goal_options, index=goal_options.index(defaults.get("goal","Muscle gain")))
+           
+            goal_options = [
+                "Muscle gain",
+                "Fat loss",
+                "General fitness",
+                "Strength development",
+                "Improve endurance",
+                "Improve flexibility",
+                "Weight maintenance"
+            ]
+
+            saved_goals = defaults.get("goal", ["Muscle gain"])
+
+            if isinstance(saved_goals, str):
+                saved_goals = [saved_goals]
+
+            valid_saved_goals = [
+                g for g in saved_goals
+                if g in goal_options
+            ]
+
+            goal = st.multiselect(
+                "Fitness Goals (Select one or more)",
+                options=goal_options,
+                default=valid_saved_goals,
+                placeholder="Choose your fitness goals",
+                help="You can select multiple fitness goals."
+            )
+
         with b:
             levels = ["Beginner","Intermediate","Advanced"]
             experience = st.selectbox("Experience level", levels, index=levels.index(defaults.get("experience","Beginner")))
@@ -150,29 +318,71 @@ elif page == "My Profile":
             equipment_options = ["Full gym","Dumbbells only","Bodyweight only","Home gym"]
             equipment = st.selectbox("Available equipment", equipment_options, index=equipment_options.index(defaults.get("equipment","Full gym")))
             limitations = st.text_area("Injuries, pain, or exercise limitations (optional)", value=defaults.get("limitations",""))
-        if st.form_submit_button("💾 Save Profile", type="primary"):
-            save_profile(age,height,weight,goal,experience,days,equipment,limitations)
-            st.success("Profile saved.")
-            st.rerun()
+        
+            if st.form_submit_button("💾 Save Profile", type="primary"):
+
+                if not goal:
+                    st.error("Please select at least one fitness goal.")
+
+                else:
+                    is_update = profile is not None
+
+                   
+                    save_profile(
+                        st.session_state.auth_client,
+                        st.session_state.auth_user.id,
+                        age,
+                        height,
+                        weight,
+                        goal,
+                        experience,
+                        days,
+                        equipment,
+                        limitations
+)
+
+
+                    if is_update:
+                        st.session_state["profile_notice"] = (
+                            "Your fitness profile has been updated successfully!"
+                        )
+                    else:
+                        st.session_state["profile_notice"] = (
+                            "Your fitness profile has been saved successfully!"
+                        )
+
+                    st.rerun()
+
 
 elif page == "AI Workout Planner":
     heading("AI Workout Planner", "Workout Recommendations")
     if require_profile():
         st.markdown('<div class="panel"><div class="panel-title">✨ Generate a Personalized Weekly Plan</div>', unsafe_allow_html=True)
-        st.write(f'**Goal:** {profile["goal"]} &nbsp; | &nbsp; **Level:** {profile["experience"]} &nbsp; | &nbsp; **Days:** {profile["days_per_week"]}', unsafe_allow_html=True)
+        st.write(
+            f'**Goals:** {format_goals(profile["goal"])} '
+            f'| **Level:** {profile["experience"]} '
+            f'| **Days:** {profile["days_per_week"]}'
+        )
         extra = st.text_area("Additional preferences (optional)", placeholder="Example: prefer 45-minute sessions, avoid high-impact movements.")
         if st.button("Generate Workout Plan", type="primary"):
             with st.spinner("Generating your plan with Gemini..."):
                 try:
                     result = generate_workout_plan(profile, extra)
-                    save_plan(result)
+                    save_plan(
+                        st.session_state.auth_client,
+                        st.session_state.auth_user.id,
+                        result
+)
                     st.success("Your plan has been generated.")
                     st.markdown(result)
                 except Exception as exc:
                     st.error(f"AI generation failed: {exc}")
                     st.info("Check your Gemini API key, model access, internet connection, and quota.")
         st.markdown("</div>", unsafe_allow_html=True)
-        previous = get_latest_plan()
+        previous = get_latest_plan(
+            st.session_state.auth_client,
+            st.session_state.auth_user.id
+)
         if previous:
             with st.expander("View saved workout plan"):
                 st.markdown(previous["plan_text"])
@@ -190,10 +400,20 @@ elif page == "Progress Tracker":
                 workouts = st.number_input("Workouts completed this week", 0, 14, 0)
                 notes = st.text_input("Notes (optional)", placeholder="Energy, consistency, personal bests...")
             if st.form_submit_button("Save Progress", type="primary"):
-                add_progress(entry_date.isoformat(),weight,int(workouts),notes)
+                add_progress(
+                    st.session_state.auth_client,
+                    st.session_state.auth_user.id,
+                    entry_date.isoformat(),
+                    weight,
+                    int(workouts),
+                    notes
+)
                 st.success("Progress entry saved.")
                 st.rerun()
-        data = get_progress()
+        data = get_progress(
+            st.session_state.auth_client,
+            st.session_state.auth_user.id
+)
         if not data.empty:
             st.markdown('<div class="panel"><div class="panel-title">📊 Progress Overview</div>', unsafe_allow_html=True)
             x,y,z = st.columns(3)

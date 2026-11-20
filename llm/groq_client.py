@@ -9,8 +9,15 @@ from config import (
     validate_api_key
 )
 
+from llm.prompts import FITNESS_CHAT_SYSTEM_PROMPT
+
+
+# ==========================================
+# GROQ MODEL CONNECTION
+# ==========================================
 
 def get_llm():
+
     validate_api_key()
 
     return ChatGroq(
@@ -22,45 +29,57 @@ def get_llm():
     )
 
 
+# ==========================================
+# FORMAT USER FITNESS PROFILE
+# ==========================================
+
+def format_profile(profile):
+
+    if not profile:
+        return "No fitness profile has been provided."
+
+    goals = profile.get("goal", "Not specified")
+
+    if isinstance(goals, list):
+        goals = ", ".join(goals)
+
+    return f"""
+USER FITNESS PROFILE:
+
+Age: {profile.get("age", "Not provided")}
+Height: {profile.get("height_cm", "Not provided")} cm
+Weight: {profile.get("weight_kg", "Not provided")} kg
+Fitness Goals: {goals}
+Experience: {profile.get("experience", "Not provided")}
+Training Days: {profile.get("days_per_week", "Not provided")}
+Equipment: {profile.get("equipment", "Not provided")}
+Limitations: {profile.get("limitations") or "None provided"}
+
+Use this information to personalize your advice.
+Never invent missing profile information.
+"""
+
+
+# ==========================================
+# AI FITNESS CHAT - LANGCHAIN
+# ==========================================
+
 def ask_fitness_coach(question, profile=None):
-
-    profile_text = "No user profile provided."
-
-    if profile:
-        profile_text = (
-            f'Age: {profile["age"]}; '
-            f'Height: {profile["height_cm"]} cm; '
-            f'Weight: {profile["weight_kg"]} kg; '
-            f'Goal: {profile["goal"]}; '
-            f'Experience: {profile["experience"]}; '
-            f'Limitations: {profile["limitations"] or "None provided"}.'
-        )
 
     prompt = ChatPromptTemplate.from_messages([
         (
             "system",
-            """You are a knowledgeable and responsible AI fitness
-            education assistant.
-
-            Provide general fitness information, exercise guidance,
-            recovery advice and workout explanations.
-
-            Avoid medical diagnosis, treatment recommendations,
-            steroids, extreme diets and training through pain.
-
-            Encourage proper warm-up, recovery and gradual progression.
-
-            If users mention injuries or medical conditions,
-            recommend consulting a qualified healthcare professional.
-
-            User profile: {profile}"""
+            FITNESS_CHAT_SYSTEM_PROMPT
+            + "\n\nAdditional user context:\n{profile}"
         ),
         ("human", "{question}")
     ])
 
     chain = prompt | get_llm() | StrOutputParser()
 
-    return chain.invoke({
-        "profile": profile_text,
+    response = chain.invoke({
+        "profile": format_profile(profile),
         "question": question
     })
+
+    return response.strip()
