@@ -2,8 +2,9 @@
 from database.supabase_client import get_supabase_client
 
 
+
 def register_user(email: str, password: str):
-    """Register a new user using Supabase Auth."""
+    """Register a new user and return their authenticated session."""
 
     supabase = get_supabase_client()
 
@@ -12,7 +13,11 @@ def register_user(email: str, password: str):
         "password": password
     })
 
-    return response
+    return {
+        "client": supabase,
+        "user": response.user,
+        "session": response.session
+    }
 
 
 def login_user(email: str, password: str):

@@ -5,6 +5,7 @@ from database.auth import (
     logout_user,
     get_current_user
 )
+from database.supabase_client import get_supabase_client
 # Other imports...
 
 # Define helper function BEFORE using it
@@ -30,7 +31,26 @@ from llm.groq_client import ask_fitness_coach
 
 st.set_page_config(page_title="AI Gym Companion", page_icon="💪", layout="wide", initial_sidebar_state="expanded")
 init_db()
+# ---------------- EMAIL VERIFICATION CALLBACK ----------------
 
+if "code" in st.query_params:
+    try:
+        supabase = get_supabase_client()
+
+        code = st.query_params["code"]
+
+        response = supabase.auth.exchange_code_for_session(code)
+
+        st.session_state.auth_client = supabase
+        st.session_state.auth_user = response.user
+
+        st.query_params.clear()
+
+        st.success("Email verified successfully!")
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"Email verification failed: {e}")
 # ---------------- AUTHENTICATION GATE ----------------
 
 if "auth_client" not in st.session_state:
@@ -101,13 +121,15 @@ if st.session_state.auth_user is None:
                 try:
                     result = register_user(new_email, new_password)
 
-                    if result.session:
-                        st.success("Account created! You can now log in.")
+                    if result["session"] is not None:
+                        st.session_state.auth_client = result["client"]
+                        st.session_state.auth_user = result["user"]
+
+                        st.success("Account created successfully! Welcome!")
+                        st.rerun()
+
                     else:
-                        st.success(
-                            "Registration successful! "
-                            "Check your email to confirm your account."
-                        )
+                        st.success("Account created. Please check your email.")
 
                 except Exception as e:
                      st.error(f"Registration failed: {str(e)}")
