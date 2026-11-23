@@ -7,3 +7,4 @@ venv/
 __pycache__/
 *.pyc
 .streamlit/secrets.toml
+Application_Working_Video/*.mp4
