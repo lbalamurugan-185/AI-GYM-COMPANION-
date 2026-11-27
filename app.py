@@ -1,4 +1,7 @@
 import streamlit as st
+import json
+from pathlib import Path
+from urllib.parse import quote_plus
 from database.auth import (
     register_user,
     login_user,
@@ -212,7 +215,7 @@ with st.sidebar:
     else:
         st.caption("Complete your profile to begin.")
     st.markdown("---")
-    st.caption("Powered by Streamlit + LangChain + Gemini")
+    st.caption("Powered by Streamlit + LangChain + Groq")
 
 profile = get_profile(
     st.session_state.auth_client,
@@ -236,6 +239,86 @@ def require_profile():
         st.warning("Please complete **My Profile** before using this section.")
         return False
     return True
+
+
+def render_workout_plan(plan_text):
+    """Render structured workout JSON; retain support for older Markdown plans."""
+    try:
+        plan = json.loads(plan_text) if isinstance(plan_text, str) else plan_text
+    except (json.JSONDecodeError, TypeError):
+        st.markdown(plan_text)
+        return
+    if not isinstance(plan, dict) or not isinstance(plan.get("days"), list):
+        st.markdown(plan_text)
+        return
+
+    st.subheader(plan.get("title", "Your Personalized Weekly Workout Plan"))
+    st.caption(plan.get("overview", "Personalized workout schedule"))
+    if plan.get("weekly_schedule"):
+        st.markdown("### Weekly schedule")
+        st.dataframe(plan["weekly_schedule"], use_container_width=True, hide_index=True)
+
+    for day in plan.get("days", []):
+        with st.expander(f'{day.get("day", "Training day")} – {day.get("focus", "Workout")}', expanded=False):
+            if day.get("warmup"):
+                st.markdown("**Warm-up**")
+                st.write(day["warmup"])
+            for idx, exercise in enumerate(day.get("exercises", []), 1):
+                st.markdown(f'#### {idx}. {exercise.get("name", "Exercise")}')
+                st.caption(
+                    f'{exercise.get("muscle_group", "Full body")} · '
+                    f'{exercise.get("sets", "—")} sets × {exercise.get("reps", "—")} · '
+                    f'Rest: {exercise.get("rest", "—")}'
+                )
+                slug = exercise.get("image_key") or exercise.get("name", "").lower().replace(" ", "_")
+                image_files = [
+                    Path("assets") / "exercises" / f"{slug}.jpg",
+                    Path("assets") / "exercises" / f"{slug}.png",
+                ]
+                local_image = next((p for p in image_files if p.exists()), None)
+                if local_image:
+                    st.image(str(local_image), width=360)
+                else:
+                    image_url = "https://www.google.com/search?tbm=isch&q=" + quote_plus(
+                        exercise.get("name", "") + " exercise demonstration"
+                    )
+                    st.markdown(f"[Find exercise image]({image_url})")
+                c1, c2 = st.columns(2)
+                c1.markdown(f'**Target muscles:** {exercise.get("muscle_group", "Not specified")}')
+                c2.markdown(f'**Equipment:** {exercise.get("equipment", "Not specified")}')
+                st.markdown("**How to perform**")
+                for item in exercise.get("instructions", []):
+                    st.markdown(f"- {item}")
+                if exercise.get("common_mistakes"):
+                    st.markdown("**Common mistakes to avoid**")
+                    for item in exercise["common_mistakes"]:
+                        st.markdown(f"- {item}")
+                if exercise.get("alternatives"):
+                    st.markdown("**Alternatives**")
+                    for item in exercise["alternatives"]:
+                        st.markdown(f"- {item}")
+                video_query = quote_plus(exercise.get("name", "") + " proper form exercise tutorial")
+                st.markdown(f"[▶ Watch demonstration video](https://www.youtube.com/results?search_query={video_query})")
+                st.divider()
+            if day.get("cooldown"):
+                st.markdown("**Cool-down**")
+                st.write(day["cooldown"])
+
+    for heading, key in [
+        ("Recovery recommendations", "recovery"),
+        ("Progression strategy", "progression"),
+        ("Coach's advice", "coach_advice"),
+        ("Safety notes", "safety_notes"),
+    ]:
+        content = plan.get(key)
+        if content:
+            st.markdown(f"### {heading}")
+            if isinstance(content, list):
+                for item in content:
+                    st.markdown(f"- {item}")
+            else:
+                st.write(content)
+
 
 if page == "Dashboard":
     heading("Dashboard", "Overview")
@@ -281,7 +364,7 @@ if page == "Dashboard":
         st.markdown('<div class="panel"><div class="panel-title">🏋️ Latest AI Workout Plan</div>', unsafe_allow_html=True)
         if latest:
             st.caption(f'Generated: {latest["created_at"]}')
-            st.markdown(latest["plan_text"])
+            render_workout_plan(latest["plan_text"])
         else:
             st.info("No workout plan generated yet. Open AI Workout Planner to create one.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -303,6 +386,14 @@ elif page == "My Profile":
             age = st.number_input("Age", 16, 100, int(defaults.get("age",25)))
             height = st.number_input("Height (cm)", 100.0, 230.0, float(defaults.get("height_cm",170.0)), 0.5)
             weight = st.number_input("Current weight (kg)", 30.0, 300.0, float(defaults.get("weight_kg",70.0)), 0.5)
+            gender_options = ["Prefer not to say", "Female", "Male", "Other"]
+            saved_gender = defaults.get("gender") or "Prefer not to say"
+            gender = st.selectbox(
+                "Gender (optional)",
+                gender_options,
+                index=gender_options.index(saved_gender) if saved_gender in gender_options else 0,
+                help="Optional context only. Workout recommendations are primarily based on goals, experience, ability, equipment and limitations."
+            )
            
             goal_options = [
                 "Muscle gain",
@@ -360,7 +451,8 @@ elif page == "My Profile":
                         experience,
                         days,
                         equipment,
-                        limitations
+                        limitations,
+                        gender
 )
 
 
@@ -376,38 +468,64 @@ elif page == "My Profile":
                     st.rerun()
 
 
+
+
 elif page == "AI Workout Planner":
     heading("AI Workout Planner", "Workout Recommendations")
+
     if require_profile():
-        st.markdown('<div class="panel"><div class="panel-title">✨ Generate a Personalized Weekly Plan</div>', unsafe_allow_html=True)
-        st.write(
-            f'**Goals:** {format_goals(profile["goal"])} '
-            f'| **Level:** {profile["experience"]} '
-            f'| **Days:** {profile["days_per_week"]}'
+        st.markdown("### Generate a Personalized Weekly Plan")
+
+        st.markdown(
+            f"**Goals:** {format_goals(profile.get('goal'))} "
+            f"| **Level:** {profile.get('experience')} "
+            f"| **Days:** {profile.get('days_per_week')}"
         )
-        extra = st.text_area("Additional preferences (optional)", placeholder="Example: prefer 45-minute sessions, avoid high-impact movements.")
-        if st.button("Generate Workout Plan", type="primary"):
-            with st.spinner("Generating your plan with Gemini..."):
-                try:
-                    result = generate_workout_plan(profile, extra)
+
+        with st.form("workout_form"):
+            additional_context = st.text_area(
+                "Additional preferences (optional)",
+                placeholder="Example: prefer 45-minute sessions."
+            )
+
+            generate_button = st.form_submit_button(
+                "Generate Workout Plan",
+                type="primary"
+            )
+
+        if generate_button:
+            try:
+                with st.spinner("Generating your workout plan..."):
+                    result = generate_workout_plan(
+                        profile,
+                        additional_context
+                    )
+
                     save_plan(
                         st.session_state.auth_client,
                         st.session_state.auth_user.id,
                         result
-)
-                    st.success("Your plan has been generated.")
-                    st.markdown(result)
-                except Exception as exc:
-                    st.error(f"AI generation failed: {exc}")
-                    st.info("Check your Gemini API key, model access, internet connection, and quota.")
-        st.markdown("</div>", unsafe_allow_html=True)
-        previous = get_latest_plan(
-            st.session_state.auth_client,
-            st.session_state.auth_user.id
-)
-        if previous:
-            with st.expander("View saved workout plan"):
-                st.markdown(previous["plan_text"])
+                    )
+
+                st.success("Workout plan generated successfully!")
+                render_workout_plan(result)
+
+            except Exception as exc:
+                st.error(f"Workout generation failed: {exc}")
+
+        else:
+            previous = get_latest_plan(
+                st.session_state.auth_client,
+                st.session_state.auth_user.id
+            )
+
+            if previous:
+                with st.expander("View saved workout plan"):
+                    render_workout_plan(previous["plan_text"])
+            else:
+                st.info("No workout plan generated yet.")
+
+
 
 elif page == "Progress Tracker":
     heading("Progress Tracker", "Fitness Analytics")
@@ -451,24 +569,51 @@ elif page == "Progress Tracker":
         else:
             st.info("No entries yet. Save your first progress record above.")
 
+
 elif page == "AI Fitness Chat":
     heading("AI Fitness Chat", "AI Assistant")
-    st.markdown("Ask general questions about exercise selection, training structure, recovery, and consistency.")
-    if "chat_messages" not in st.session_state:
-        st.session_state.chat_messages = []
-    for item in st.session_state.chat_messages:
-        with st.chat_message(item["role"]):
-            st.markdown(item["content"])
+
+    st.markdown(
+        "Ask general questions about exercise selection, "
+        "training structure, recovery, nutrition and consistency."
+    )
+
+    # Isolate chat history for each authenticated user
+    user_id = str(st.session_state.auth_user.id)
+    chat_key = f"chat_messages_{user_id}"
+
+    if chat_key not in st.session_state:
+        st.session_state[chat_key] = []
+
+    # Display this user's chat history
+    for message in st.session_state[chat_key]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
     question = st.chat_input("Ask your fitness companion...")
+
     if question:
-        st.session_state.chat_messages.append({"role":"user","content":question})
+        st.session_state[chat_key].append({
+            "role": "user",
+            "content": question
+        })
+
         with st.chat_message("user"):
             st.markdown(question)
+
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
-                    answer = ask_fitness_coach(question,profile)
+                    answer = ask_fitness_coach(
+                        question,
+                        profile or {}
+                    )
                 except Exception as exc:
-                    answer = f"AI service error: {exc}. Check your API key and quota."
+                    answer = f"AI service error: {exc}"
+
                 st.markdown(answer)
-        st.session_state.chat_messages.append({"role":"assistant","content":answer})
+
+        st.session_state[chat_key].append({
+            "role": "assistant",
+            "content": answer
+        })

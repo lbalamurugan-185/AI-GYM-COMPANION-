@@ -31,7 +31,8 @@ def save_profile(
     experience,
     days,
     equipment,
-    limitations
+    limitations,
+    gender="Prefer not to say"
 ):
     """Create or update the logged-in user's profile."""
 
@@ -44,7 +45,8 @@ def save_profile(
         "experience": experience,
         "days_per_week": days,
         "equipment": equipment,
-        "limitations": limitations
+        "limitations": limitations,
+        "gender": gender or "Prefer not to say"
     }
 
     return (
